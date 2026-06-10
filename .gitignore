@@ -1,6 +1,12 @@
 # Prerequisites
 *.d
 
+# Build directories
+build/
+builddir/
+meson-logs/
+meson-private/
+
 # Object files
 *.o
 *.ko
