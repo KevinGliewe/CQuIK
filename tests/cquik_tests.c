@@ -295,6 +295,53 @@ static MunitResult test_mat4_inverse_rigid(const MunitParameter params[], void *
     return MUNIT_OK;
 }
 
+static MunitResult test_matrix_vector_helpers(const MunitParameter params[], void *user_data)
+{
+    const double q[2] = {CQUIK_PI / 2.0, 0.0};
+    cquik_mat4 identity;
+    cquik_mat4 transform;
+    cquik_mat4 inverse;
+    cquik_mat4 product;
+    cquik_mat4 frames[3];
+    cquik_vec6 error;
+
+    (void)params;
+    (void)user_data;
+
+    munit_assert_size(sizeof(cquik_vec3), ==, 3u * sizeof(double));
+    munit_assert_size(sizeof(cquik_vec4), ==, 4u * sizeof(double));
+    munit_assert_size(sizeof(cquik_vec6), ==, 6u * sizeof(double));
+    munit_assert_size(sizeof(cquik_mat4), ==, 16u * sizeof(double));
+
+    cquik_mat4_identity_typed(&identity);
+    assert_near(identity.affine.r00, 1.0, 1.0e-12);
+    assert_near(identity.m[1][1], 1.0, 1.0e-12);
+    assert_near(identity.rows.r2.xyzw.z, 1.0, 1.0e-12);
+    assert_near(identity.v[15], 1.0, 1.0e-12);
+
+    munit_assert_int(cquik_forward_kinematics_typed(&planar_chain, q, &transform), ==, CQUIK_STATUS_OK);
+    assert_near(transform.affine.tx, 0.0, 1.0e-12);
+    assert_near(transform.affine.ty, 2.0, 1.0e-12);
+    assert_near(transform.m[1][3], 2.0, 1.0e-12);
+    assert_near(transform.rows.r1.xyzw.w, 2.0, 1.0e-12);
+
+    munit_assert_int(cquik_forward_kinematics_all_typed(&planar_chain, q, frames), ==, CQUIK_STATUS_OK);
+    assert_near(frames[0].affine.r00, 1.0, 1.0e-12);
+    assert_near(frames[1].affine.ty, 1.0, 1.0e-12);
+    assert_near(frames[2].affine.ty, 2.0, 1.0e-12);
+
+    cquik_mat4_inverse_rigid_typed(&transform, &inverse);
+    cquik_mat4_mul_typed(&transform, &inverse, &product);
+    assert_mat4_near(product.v, identity.v, 1.0e-12);
+
+    munit_assert_int(cquik_pose_error_typed(&transform, &identity, &error), ==, CQUIK_STATUS_OK);
+    assert_near(error.pose.x, 0.0, 1.0e-12);
+    assert_near(error.pose.y, 2.0, 1.0e-12);
+    assert_near(error.parts.angular.xyz.z, CQUIK_PI / 2.0, 1.0e-12);
+
+    return MUNIT_OK;
+}
+
 static MunitResult test_pose_error(const MunitParameter params[], void *user_data)
 {
     const double identity[16] = {
@@ -741,34 +788,46 @@ static MunitResult test_low_dof_damped_solver(const MunitParameter params[], voi
     const double q_target[2] = {0.30, -0.50};
     double q_nr[2] = {-0.20, 0.10};
     double q_dnr[2] = {-0.20, 0.10};
-    double target[16];
-    double solved_transform[16];
-    double error[6];
+    double q_dnr_workspace[2] = {-0.20, 0.10};
+    double workspace[27u * 2u + 6u];
+    cquik_mat4 target;
+    cquik_mat4 solved_transform;
+    cquik_vec6 error;
     cquik_options options = cquik_default_options();
     cquik_result result;
 
     (void)params;
     (void)user_data;
 
-    munit_assert_int(cquik_forward_kinematics(&planar_chain, q_target, target), ==, CQUIK_STATUS_OK);
+    munit_assert_int(cquik_forward_kinematics_typed(&planar_chain, q_target, &target), ==, CQUIK_STATUS_OK);
 
     options.method = CQUIK_METHOD_NR;
     options.tolerance = 1.0e-12;
     options.max_iterations = 16;
     options.relative_improvement_tolerance = 0.0;
     options.minimum_step_size = 0.0;
-    munit_assert_int(cquik_solve(&planar_chain, target, q_nr, &options, &result), ==, CQUIK_STATUS_SINGULAR);
+    munit_assert_int(cquik_solve_typed(&planar_chain, &target, q_nr, &options, &result), ==, CQUIK_STATUS_SINGULAR);
     munit_assert_int(result.status, ==, CQUIK_STATUS_SINGULAR);
 
     options.method = CQUIK_METHOD_DNR;
     options.damping = 1.0e-4;
     options.max_iterations = 128;
-    munit_assert_int(cquik_solve(&planar_chain, target, q_dnr, &options, &result), ==, CQUIK_STATUS_OK);
+    munit_assert_int(cquik_solve_typed(&planar_chain, &target, q_dnr, &options, &result), ==, CQUIK_STATUS_OK);
     munit_assert_double(result.residual_norm, <, options.tolerance);
 
-    munit_assert_int(cquik_forward_kinematics(&planar_chain, q_dnr, solved_transform), ==, CQUIK_STATUS_OK);
-    munit_assert_int(cquik_pose_error(solved_transform, target, error), ==, CQUIK_STATUS_OK);
-    munit_assert_double(norm6(error), <, 1.0e-11);
+    munit_assert_int(cquik_solve_w_typed(
+        &planar_chain,
+        &target,
+        q_dnr_workspace,
+        &options,
+        &result,
+        workspace,
+        sizeof(workspace) / sizeof(workspace[0])), ==, CQUIK_STATUS_OK);
+    munit_assert_double(result.residual_norm, <, options.tolerance);
+
+    munit_assert_int(cquik_forward_kinematics_typed(&planar_chain, q_dnr, &solved_transform), ==, CQUIK_STATUS_OK);
+    munit_assert_int(cquik_pose_error_typed(&solved_transform, &target, &error), ==, CQUIK_STATUS_OK);
+    munit_assert_double(norm6(error.v), <, 1.0e-11);
 
     return MUNIT_OK;
 }
@@ -833,6 +892,7 @@ static MunitResult test_invalid_arguments(const MunitParameter params[], void *u
 static MunitTest cquik_tests[] = {
     {(char *)"/default-options", test_default_options, NULL, NULL, MUNIT_TEST_OPTION_NONE, NULL},
     {(char *)"/mat4/inverse-rigid", test_mat4_inverse_rigid, NULL, NULL, MUNIT_TEST_OPTION_NONE, NULL},
+    {(char *)"/matrix-vector-helpers", test_matrix_vector_helpers, NULL, NULL, MUNIT_TEST_OPTION_NONE, NULL},
     {(char *)"/pose-error", test_pose_error, NULL, NULL, MUNIT_TEST_OPTION_NONE, NULL},
     {(char *)"/fk/planar", test_forward_kinematics_planar, NULL, NULL, MUNIT_TEST_OPTION_NONE, NULL},
     {(char *)"/jacobian/planar", test_jacobian_planar, NULL, NULL, MUNIT_TEST_OPTION_NONE, NULL},

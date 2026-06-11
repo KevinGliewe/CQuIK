@@ -100,6 +100,88 @@ typedef enum cquik_method {
     CQUIK_METHOD_DQUIK = 3  /**< Damped QuIK/Halley update; uses options.damping. */
 } cquik_method;
 
+/** 3D vector helper.
+ *
+ * The flat array and named struct share storage, so code can pass v.v to raw
+ * CQuIK APIs while reading or writing v.xyz.x, v.xyz.y, and v.xyz.z in user
+ * code.
+ */
+typedef union cquik_vec3 {
+    double v[3]; /**< Flat [x, y, z] storage. */
+    struct {
+        double x; /**< X component. */
+        double y; /**< Y component. */
+        double z; /**< Z component. */
+    } xyz; /**< Named component view. */
+} cquik_vec3;
+
+/** 4D vector helper, mainly useful for homogeneous matrix rows. */
+typedef union cquik_vec4 {
+    double v[4]; /**< Flat [x, y, z, w] storage. */
+    struct {
+        double x; /**< X component. */
+        double y; /**< Y component. */
+        double z; /**< Z component. */
+        double w; /**< W component. */
+    } xyzw; /**< Named component view. */
+} cquik_vec4;
+
+/** 6D pose-error vector helper.
+ *
+ * The first three values are linear error in the chain's length unit; the last
+ * three values are angular error in radians.
+ */
+typedef union cquik_vec6 {
+    double v[6]; /**< Flat [x, y, z, rx, ry, rz] storage. */
+    struct {
+        double x;  /**< Linear x error. */
+        double y;  /**< Linear y error. */
+        double z;  /**< Linear z error. */
+        double rx; /**< Angular x error, radians. */
+        double ry; /**< Angular y error, radians. */
+        double rz; /**< Angular z error, radians. */
+    } pose; /**< Named pose-error view. */
+    struct {
+        cquik_vec3 linear;  /**< Linear error view. */
+        cquik_vec3 angular; /**< Angular error view, radians. */
+    } parts; /**< Split linear/angular view. */
+} cquik_vec6;
+
+/** 4x4 row-major homogeneous matrix helper.
+ *
+ * All views share the same storage. For a transform T, T.v is compatible with
+ * APIs that take double[16], T.m[row][col] gives row/column indexing, and
+ * T.affine.tx/ty/tz expose the translation column.
+ */
+typedef union cquik_mat4 {
+    double v[16];    /**< Flat row-major storage. */
+    double m[4][4];  /**< Row/column storage: m[row][column]. */
+    struct {
+        cquik_vec4 r0; /**< Row 0. */
+        cquik_vec4 r1; /**< Row 1. */
+        cquik_vec4 r2; /**< Row 2. */
+        cquik_vec4 r3; /**< Row 3. */
+    } rows; /**< Row vector view. */
+    struct {
+        double r00; /**< Rotation row 0, column 0. */
+        double r01; /**< Rotation row 0, column 1. */
+        double r02; /**< Rotation row 0, column 2. */
+        double tx;  /**< Translation x. */
+        double r10; /**< Rotation row 1, column 0. */
+        double r11; /**< Rotation row 1, column 1. */
+        double r12; /**< Rotation row 1, column 2. */
+        double ty;  /**< Translation y. */
+        double r20; /**< Rotation row 2, column 0. */
+        double r21; /**< Rotation row 2, column 1. */
+        double r22; /**< Rotation row 2, column 2. */
+        double tz;  /**< Translation z. */
+        double r30; /**< Bottom row column 0, usually 0. */
+        double r31; /**< Bottom row column 1, usually 0. */
+        double r32; /**< Bottom row column 2, usually 0. */
+        double r33; /**< Bottom row column 3, usually 1. */
+    } affine; /**< Named row-major affine transform view. */
+} cquik_mat4;
+
 /** One standard-DH joint in a serial chain.
  *
  * The joint transform uses the conventional standard-DH order
@@ -191,6 +273,9 @@ CQUIK_API cquik_status cquik_options_set_recommended_saturation(
 /** Write a 4x4 row-major identity transform to out. */
 CQUIK_API void cquik_mat4_identity(double out[16]);
 
+/** Typed cquik_mat4 wrapper for cquik_mat4_identity(). */
+CQUIK_API void cquik_mat4_identity_typed(cquik_mat4 *out);
+
 /** Multiply two 4x4 row-major matrices.
  *
  * The output may alias either input.
@@ -201,6 +286,12 @@ CQUIK_API void cquik_mat4_identity(double out[16]);
  */
 CQUIK_API void cquik_mat4_mul(const double a[16], const double b[16], double out[16]);
 
+/** Typed cquik_mat4 wrapper for cquik_mat4_mul(). */
+CQUIK_API void cquik_mat4_mul_typed(
+    const cquik_mat4 *a,
+    const cquik_mat4 *b,
+    cquik_mat4 *out);
+
 /** Invert a rigid 4x4 row-major homogeneous transform.
  *
  * This assumes the top-left 3x3 block is a rotation matrix and the bottom row
@@ -210,6 +301,11 @@ CQUIK_API void cquik_mat4_mul(const double a[16], const double b[16], double out
  * @param out Destination inverse transform.
  */
 CQUIK_API void cquik_mat4_inverse_rigid(const double t[16], double out[16]);
+
+/** Typed cquik_mat4 wrapper for cquik_mat4_inverse_rigid(). */
+CQUIK_API void cquik_mat4_inverse_rigid_typed(
+    const cquik_mat4 *t,
+    cquik_mat4 *out);
 
 /** Compute forward kinematics for a chain at joint vector q.
  *
@@ -222,6 +318,12 @@ CQUIK_API cquik_status cquik_forward_kinematics(
     const cquik_chain *chain,
     const double *q,
     double out_transform[16]);
+
+/** Typed cquik_mat4 wrapper for cquik_forward_kinematics(). */
+CQUIK_API cquik_status cquik_forward_kinematics_typed(
+    const cquik_chain *chain,
+    const double *q,
+    cquik_mat4 *out_transform);
 
 /** Compute cumulative base-to-joint transforms for a chain at joint vector q.
  *
@@ -242,6 +344,15 @@ CQUIK_API cquik_status cquik_forward_kinematics_all(
     const double *q,
     double *out_transforms_16xnp1);
 
+/** Typed cquik_mat4-array wrapper for cquik_forward_kinematics_all().
+ *
+ * out_transforms_m4xnp1 must point to chain->dof + 1 cquik_mat4 values.
+ */
+CQUIK_API cquik_status cquik_forward_kinematics_all_typed(
+    const cquik_chain *chain,
+    const double *q,
+    cquik_mat4 *out_transforms_m4xnp1);
+
 /** Compute the 6D pose error from current to target.
  *
  * The linear part is current position minus target position in world/base
@@ -257,6 +368,12 @@ CQUIK_API cquik_status cquik_pose_error(
     const double current[16],
     const double target[16],
     double out_error[6]);
+
+/** Typed cquik_mat4/cquik_vec6 wrapper for cquik_pose_error(). */
+CQUIK_API cquik_status cquik_pose_error_typed(
+    const cquik_mat4 *current,
+    const cquik_mat4 *target,
+    cquik_vec6 *out_error);
 
 /** Compute the 6-by-dof geometric Jacobian.
  *
@@ -328,6 +445,14 @@ CQUIK_API cquik_status cquik_solve(
     const cquik_options *options,
     cquik_result *result);
 
+/** Typed cquik_mat4 wrapper for cquik_solve(). */
+CQUIK_API cquik_status cquik_solve_typed(
+    const cquik_chain *chain,
+    const cquik_mat4 *target,
+    double *q_in_out,
+    const cquik_options *options,
+    cquik_result *result);
+
 /** Return the number of doubles required by cquik_solve_w().
  *
  * Returns 0 for an invalid chain.
@@ -351,6 +476,16 @@ CQUIK_API size_t cquik_solve_workspace_size(const cquik_chain *chain);
 CQUIK_API cquik_status cquik_solve_w(
     const cquik_chain *chain,
     const double target[16],
+    double *q_in_out,
+    const cquik_options *options,
+    cquik_result *result,
+    double *workspace,
+    size_t workspace_count);
+
+/** Typed cquik_mat4 wrapper for cquik_solve_w(). */
+CQUIK_API cquik_status cquik_solve_w_typed(
+    const cquik_chain *chain,
+    const cquik_mat4 *target,
     double *q_in_out,
     const cquik_options *options,
     cquik_result *result,
@@ -888,6 +1023,14 @@ CQUIK_DEF void cquik_mat4_identity(double out[16])
     out[15] = 1.0;
 }
 
+CQUIK_DEF void cquik_mat4_identity_typed(cquik_mat4 *out)
+{
+    if (!out) {
+        return;
+    }
+    cquik_mat4_identity(out->v);
+}
+
 CQUIK_DEF void cquik_mat4_mul(const double a[16], const double b[16], double out[16])
 {
     int r;
@@ -905,6 +1048,17 @@ CQUIK_DEF void cquik_mat4_mul(const double a[16], const double b[16], double out
     }
 
     memcpy(out, tmp, sizeof(tmp));
+}
+
+CQUIK_DEF void cquik_mat4_mul_typed(
+    const cquik_mat4 *a,
+    const cquik_mat4 *b,
+    cquik_mat4 *out)
+{
+    if (!a || !b || !out) {
+        return;
+    }
+    cquik_mat4_mul(a->v, b->v, out->v);
 }
 
 CQUIK_DEF void cquik_mat4_inverse_rigid(const double t[16], double out[16])
@@ -933,12 +1087,33 @@ CQUIK_DEF void cquik_mat4_inverse_rigid(const double t[16], double out[16])
     memcpy(out, tmp, sizeof(tmp));
 }
 
+CQUIK_DEF void cquik_mat4_inverse_rigid_typed(
+    const cquik_mat4 *t,
+    cquik_mat4 *out)
+{
+    if (!t || !out) {
+        return;
+    }
+    cquik_mat4_inverse_rigid(t->v, out->v);
+}
+
 CQUIK_DEF cquik_status cquik_forward_kinematics(
     const cquik_chain *chain,
     const double *q,
     double out_transform[16])
 {
     return cquik__eval_kinematics(chain, q, NULL, NULL, NULL, out_transform);
+}
+
+CQUIK_DEF cquik_status cquik_forward_kinematics_typed(
+    const cquik_chain *chain,
+    const double *q,
+    cquik_mat4 *out_transform)
+{
+    if (!out_transform) {
+        return CQUIK_STATUS_INVALID_ARGUMENT;
+    }
+    return cquik_forward_kinematics(chain, q, out_transform->v);
 }
 
 CQUIK_DEF cquik_status cquik_forward_kinematics_all(
@@ -959,6 +1134,17 @@ CQUIK_DEF cquik_status cquik_forward_kinematics_all(
         NULL,
         out_transforms_16xnp1,
         tool_transform);
+}
+
+CQUIK_DEF cquik_status cquik_forward_kinematics_all_typed(
+    const cquik_chain *chain,
+    const double *q,
+    cquik_mat4 *out_transforms_m4xnp1)
+{
+    if (!out_transforms_m4xnp1) {
+        return CQUIK_STATUS_INVALID_ARGUMENT;
+    }
+    return cquik_forward_kinematics_all(chain, q, out_transforms_m4xnp1[0].v);
 }
 
 CQUIK_DEF cquik_status cquik_pose_error(
@@ -1021,6 +1207,17 @@ CQUIK_DEF cquik_status cquik_pose_error(
     }
 
     return CQUIK_STATUS_OK;
+}
+
+CQUIK_DEF cquik_status cquik_pose_error_typed(
+    const cquik_mat4 *current,
+    const cquik_mat4 *target,
+    cquik_vec6 *out_error)
+{
+    if (!current || !target || !out_error) {
+        return CQUIK_STATUS_INVALID_ARGUMENT;
+    }
+    return cquik_pose_error(current->v, target->v, out_error->v);
 }
 
 CQUIK_DEF cquik_status cquik_jacobian(
@@ -1124,6 +1321,24 @@ CQUIK_DEF cquik_status cquik_solve(
     status = cquik_solve_w(chain, target, q_in_out, options, result, workspace, workspace_count);
     CQUIK_FREE(workspace);
     return status;
+}
+
+CQUIK_DEF cquik_status cquik_solve_typed(
+    const cquik_chain *chain,
+    const cquik_mat4 *target,
+    double *q_in_out,
+    const cquik_options *options,
+    cquik_result *result)
+{
+    if (!target) {
+        if (result) {
+            result->status = CQUIK_STATUS_INVALID_ARGUMENT;
+            result->iterations = 0;
+            result->residual_norm = 0.0;
+        }
+        return CQUIK_STATUS_INVALID_ARGUMENT;
+    }
+    return cquik_solve(chain, target->v, q_in_out, options, result);
 }
 
 CQUIK_DEF cquik_status cquik_solve_w(
@@ -1347,6 +1562,33 @@ CQUIK_DEF cquik_status cquik_solve_w(
         result->residual_norm = cquik__norm6(error);
     }
     return status;
+}
+
+CQUIK_DEF cquik_status cquik_solve_w_typed(
+    const cquik_chain *chain,
+    const cquik_mat4 *target,
+    double *q_in_out,
+    const cquik_options *options,
+    cquik_result *result,
+    double *workspace,
+    size_t workspace_count)
+{
+    if (!target) {
+        if (result) {
+            result->status = CQUIK_STATUS_INVALID_ARGUMENT;
+            result->iterations = 0;
+            result->residual_norm = 0.0;
+        }
+        return CQUIK_STATUS_INVALID_ARGUMENT;
+    }
+    return cquik_solve_w(
+        chain,
+        target->v,
+        q_in_out,
+        options,
+        result,
+        workspace,
+        workspace_count);
 }
 
 #undef CQUIK_DEF

@@ -22,6 +22,8 @@ The public API exposes:
 
 - `cquik_forward_kinematics` for standard-DH serial chains.
 - `cquik_forward_kinematics_all` for cumulative base-to-joint transforms.
+- `cquik_mat4`, `cquik_vec3`, `cquik_vec4`, and `cquik_vec6` helper unions
+  for friendlier matrix/vector access while staying compatible with raw arrays.
 - `cquik_jacobian` for the 6-by-n geometric Jacobian.
 - `cquik_pose_error` for the 6D pose error used by the solver.
 - `cquik_solve` for `NR`, `DNR`, `QuIK`, and `DQuIK`.
@@ -54,6 +56,21 @@ Transforms are 4-by-4 row-major matrices:
 
 Joints use standard DH parameters. For revolute joints, `q[i]` is added to
 `theta`. For prismatic joints, `q[i]` is added to `d`.
+
+The raw C APIs accept `double[16]` transforms and `double[6]` pose errors. The
+helper unions provide named and row/column views over the same storage:
+
+```c
+cquik_mat4 transform;
+
+transform.v[7]          /* flat row-major access */
+transform.m[1][3]       /* row/column access */
+transform.affine.ty     /* named translation access */
+transform.rows.r1.xyzw.w
+```
+
+Typed wrappers such as `cquik_forward_kinematics_typed` and
+`cquik_pose_error_typed` accept these helpers directly.
 
 Use a consistent linear unit across DH `a`/`d`, tool transforms, target
 transforms, tolerances, and `max_linear_step`. Angular values are radians.
@@ -108,16 +125,18 @@ meson install -C build
 The Meson project exports `cquik_dep` internally for examples/tests and
 installs `cquik.h` as a header-only library.
 
-## SWIG Python Interface
+## SWIG Interface
 
-The SWIG interface for Python is in `bindings/python/cquik.i`. It wraps the C
-API directly and adds two small helpers:
+The SWIG interface is in `bindings/swig/cquik.i`. It wraps the C API
+directly and adds two small helpers:
 
 - `cquik_make_joint(...)` creates a `cquik_joint` value.
 - `cquik_make_chain(dof, joints, tool)` creates a `cquik_chain` value.
 
 Use SWIG's generated array wrappers for pointer arguments. Arrays passed into a
-chain must outlive that chain because CQuIK stores borrowed pointers.
+chain must outlive that chain because CQuIK stores borrowed pointers. The
+example below shows the generated Python wrapper; SWIG can target other
+languages from the same interface file.
 
 ```python
 import math
@@ -201,9 +220,9 @@ static const cquik_chain kuka_chain = {
 
 ```c
 double q[6] = {0.20, -0.35, 0.45, 0.30, -0.25, 0.15};
-double transform[16];
+cquik_mat4 transform;
 
-cquik_status status = cquik_forward_kinematics(&kuka_chain, q, transform);
+cquik_status status = cquik_forward_kinematics_typed(&kuka_chain, q, &transform);
 if (status != CQUIK_STATUS_OK) {
     /* Handle invalid chain or input pointers. */
 }
@@ -225,20 +244,25 @@ debugging, visualization, or drawing links.
 
 ```c
 double q[6] = {0.20, -0.35, 0.45, 0.30, -0.25, 0.15};
-double joint_frames[(6 + 1) * 16];
+cquik_mat4 joint_frames[6 + 1];
 cquik_status status;
 
-status = cquik_forward_kinematics_all(&kuka_chain, q, joint_frames);
+status = cquik_forward_kinematics_all_typed(&kuka_chain, q, joint_frames);
 if (status != CQUIK_STATUS_OK) {
     return 1;
 }
 
 /* frame 0: base identity */
-const double *base = &joint_frames[0 * 16];
+const cquik_mat4 *base = &joint_frames[0];
 
 /* frame i + 1: cumulative transform after joint i, before the optional tool */
-const double *joint_0 = &joint_frames[1 * 16];
-const double *joint_5 = &joint_frames[6 * 16];
+const cquik_mat4 *joint_0 = &joint_frames[1];
+const cquik_mat4 *joint_5 = &joint_frames[6];
+
+printf("joint 5 position: %f %f %f\n",
+       joint_5->affine.tx,
+       joint_5->affine.ty,
+       joint_5->affine.tz);
 ```
 
 The optional `chain.tool` transform is intentionally not included in
@@ -251,14 +275,14 @@ multiply `joint_frames[chain.dof]` by `chain.tool` yourself when needed.
 planner, controller, or another call to `cquik_forward_kinematics`.
 
 ```c
-double target[16];
+cquik_mat4 target;
 double q_target[6] = {0.20, -0.35, 0.45, 0.30, -0.25, 0.15};
 double q_guess[6] = {0.26, -0.29, 0.39, 0.36, -0.19, 0.09};
 cquik_options options = cquik_default_options();
 cquik_result result;
 cquik_status status;
 
-status = cquik_forward_kinematics(&kuka_chain, q_target, target);
+status = cquik_forward_kinematics_typed(&kuka_chain, q_target, &target);
 if (status != CQUIK_STATUS_OK) {
     return 1;
 }
@@ -268,7 +292,7 @@ options.tolerance = 1.0e-10;
 options.max_iterations = 32;
 cquik_options_set_recommended_saturation(&kuka_chain, &options);
 
-status = cquik_solve(&kuka_chain, target, q_guess, &options, &result);
+status = cquik_solve_typed(&kuka_chain, &target, q_guess, &options, &result);
 if (status != CQUIK_STATUS_OK) {
     fprintf(stderr, "IK failed: %s, residual %.12e\n",
             cquik_status_string(status),
@@ -282,14 +306,20 @@ if (status != CQUIK_STATUS_OK) {
 ### Check The Solved Pose
 
 ```c
-double solved_transform[16];
-double error[6];
+cquik_mat4 solved_transform;
+cquik_vec6 error;
 
-cquik_forward_kinematics(&kuka_chain, q_guess, solved_transform);
-cquik_pose_error(solved_transform, target, error);
+cquik_forward_kinematics_typed(&kuka_chain, q_guess, &solved_transform);
+cquik_pose_error_typed(&solved_transform, &target, &error);
 
-printf("linear error:  %.12e %.12e %.12e\n", error[0], error[1], error[2]);
-printf("angular error: %.12e %.12e %.12e\n", error[3], error[4], error[5]);
+printf("linear error:  %.12e %.12e %.12e\n",
+       error.parts.linear.xyz.x,
+       error.parts.linear.xyz.y,
+       error.parts.linear.xyz.z);
+printf("angular error: %.12e %.12e %.12e\n",
+       error.parts.angular.xyz.x,
+       error.parts.angular.xyz.y,
+       error.parts.angular.xyz.z);
 ```
 
 The first three error values use the chain's linear unit. The last three are
@@ -308,9 +338,9 @@ cquik_result result;
 
 cquik_options_set_recommended_saturation(&kuka_chain, &options);
 
-status = cquik_solve_w(
+status = cquik_solve_w_typed(
     &kuka_chain,
-    target,
+    &target,
     q,
     &options,
     &result,
