@@ -356,6 +356,18 @@ static MunitResult test_pose_error(const MunitParameter params[], void *user_dat
 static MunitResult test_forward_kinematics_planar(const MunitParameter params[], void *user_data)
 {
     const double q[2] = {CQUIK_PI / 2.0, 0.0};
+    const double identity[16] = {
+        1.0, 0.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 0.0,
+        0.0, 0.0, 1.0, 0.0,
+        0.0, 0.0, 0.0, 1.0
+    };
+    const double expected_joint0[16] = {
+        0.0, -1.0, 0.0, 0.0,
+        1.0,  0.0, 0.0, 1.0,
+        0.0,  0.0, 1.0, 0.0,
+        0.0,  0.0, 0.0, 1.0
+    };
     const double expected[16] = {
         0.0, -1.0, 0.0, 0.0,
         1.0,  0.0, 0.0, 2.0,
@@ -363,12 +375,18 @@ static MunitResult test_forward_kinematics_planar(const MunitParameter params[],
         0.0,  0.0, 0.0, 1.0
     };
     double transform[16];
+    double transforms[(2 + 1) * 16];
 
     (void)params;
     (void)user_data;
 
     munit_assert_int(cquik_forward_kinematics(&planar_chain, q, transform), ==, CQUIK_STATUS_OK);
     assert_mat4_near(transform, expected, 1.0e-12);
+
+    munit_assert_int(cquik_forward_kinematics_all(&planar_chain, q, transforms), ==, CQUIK_STATUS_OK);
+    assert_mat4_near(&transforms[0 * 16], identity, 1.0e-12);
+    assert_mat4_near(&transforms[1 * 16], expected_joint0, 1.0e-12);
+    assert_mat4_near(&transforms[2 * 16], expected, 1.0e-12);
 
     return MUNIT_OK;
 }
@@ -419,6 +437,8 @@ static MunitResult test_reference_kuka_home(const MunitParameter params[], void 
 {
     const double q_home[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
     double transform[16];
+    double transforms[(6 + 1) * 16];
+    double pretool_times_tool[16];
     double jacobian[36];
 
     (void)params;
@@ -426,6 +446,10 @@ static MunitResult test_reference_kuka_home(const MunitParameter params[], void 
 
     munit_assert_int(cquik_forward_kinematics(&kuka_chain, q_home, transform), ==, CQUIK_STATUS_OK);
     assert_mat4_near(transform, kuka_home_target, 1.0e-14);
+
+    munit_assert_int(cquik_forward_kinematics_all(&kuka_chain, q_home, transforms), ==, CQUIK_STATUS_OK);
+    cquik_mat4_mul(&transforms[6 * 16], kuka_tool, pretool_times_tool);
+    assert_mat4_near(pretool_times_tool, transform, 1.0e-14);
 
     munit_assert_int(cquik_jacobian(&kuka_chain, q_home, jacobian), ==, CQUIK_STATUS_OK);
     assert_array_near(jacobian, kuka_home_jacobian, 36, 1.0e-14);
@@ -791,6 +815,9 @@ static MunitResult test_invalid_arguments(const MunitParameter params[], void *u
 
     munit_assert_int(cquik_forward_kinematics(NULL, q, transform), ==, CQUIK_STATUS_INVALID_ARGUMENT);
     munit_assert_int(cquik_forward_kinematics(&planar_chain, NULL, transform), ==, CQUIK_STATUS_INVALID_ARGUMENT);
+    munit_assert_int(cquik_forward_kinematics_all(NULL, q, transform), ==, CQUIK_STATUS_INVALID_ARGUMENT);
+    munit_assert_int(cquik_forward_kinematics_all(&planar_chain, NULL, transform), ==, CQUIK_STATUS_INVALID_ARGUMENT);
+    munit_assert_int(cquik_forward_kinematics_all(&planar_chain, q, NULL), ==, CQUIK_STATUS_INVALID_ARGUMENT);
     munit_assert_int(cquik_pose_error(NULL, transform, q), ==, CQUIK_STATUS_INVALID_ARGUMENT);
     munit_assert_int(cquik_solve(NULL, transform, q, NULL, &result), ==, CQUIK_STATUS_INVALID_ARGUMENT);
     munit_assert_int(result.status, ==, CQUIK_STATUS_INVALID_ARGUMENT);

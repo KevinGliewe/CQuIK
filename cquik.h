@@ -223,6 +223,25 @@ CQUIK_API cquik_status cquik_forward_kinematics(
     const double *q,
     double out_transform[16]);
 
+/** Compute cumulative base-to-joint transforms for a chain at joint vector q.
+ *
+ * Writes chain->dof + 1 row-major transforms. Transform 0 is the base identity
+ * frame. Transform i + 1 is the cumulative base-to-frame transform after joint
+ * i has been applied. The optional chain tool transform is not included; call
+ * cquik_forward_kinematics() when the final tool/end-effector pose is needed.
+ *
+ * Index element e of frame f as out_transforms_16xnp1[f * 16 + e].
+ *
+ * @param chain Valid serial chain description.
+ * @param q Array of chain->dof joint values.
+ * @param out_transforms_16xnp1 Destination for 16 * (chain->dof + 1) doubles.
+ * @return CQUIK_STATUS_OK or CQUIK_STATUS_INVALID_ARGUMENT.
+ */
+CQUIK_API cquik_status cquik_forward_kinematics_all(
+    const cquik_chain *chain,
+    const double *q,
+    double *out_transforms_16xnp1);
+
 /** Compute the 6D pose error from current to target.
  *
  * The linear part is current position minus target position in world/base
@@ -451,6 +470,7 @@ static cquik_status cquik__eval_kinematics(
     const double *q,
     double *origins_3xnp1,
     double *axes_3xnp1,
+    double *transforms_16xnp1,
     double out_transform[16])
 {
     int i;
@@ -460,9 +480,9 @@ static cquik_status cquik__eval_kinematics(
         return CQUIK_STATUS_INVALID_ARGUMENT;
     }
 
-    /* Forward traversal starts at the base frame. When requested, keep the
-       pre-joint origins and z-axes because the geometric Jacobian columns are
-       built from those frame quantities. */
+    /* Forward traversal starts at the base frame. Optional outputs reuse the
+       same pass: pre-joint origins/z-axes feed the Jacobian, while cumulative
+       transforms expose base-to-joint frames for callers. */
     cquik_mat4_identity(t);
 
     if (origins_3xnp1) {
@@ -474,6 +494,9 @@ static cquik_status cquik__eval_kinematics(
         axes_3xnp1[0] = 0.0;
         axes_3xnp1[1] = 0.0;
         axes_3xnp1[2] = 1.0;
+    }
+    if (transforms_16xnp1) {
+        memcpy(&transforms_16xnp1[0], t, sizeof(t));
     }
 
     for (i = 0; i < chain->dof; ++i) {
@@ -493,6 +516,9 @@ static cquik_status cquik__eval_kinematics(
             axes_3xnp1[(i + 1) * 3 + 0] = t[2];
             axes_3xnp1[(i + 1) * 3 + 1] = t[6];
             axes_3xnp1[(i + 1) * 3 + 2] = t[10];
+        }
+        if (transforms_16xnp1) {
+            memcpy(&transforms_16xnp1[(i + 1) * 16], t, sizeof(t));
         }
     }
 
@@ -521,7 +547,7 @@ static cquik_status cquik__jacobian_with_workspace(
         return CQUIK_STATUS_INVALID_ARGUMENT;
     }
 
-    status = cquik__eval_kinematics(chain, q, origins, axes, transform);
+    status = cquik__eval_kinematics(chain, q, origins, axes, NULL, transform);
     if (status != CQUIK_STATUS_OK) {
         return status;
     }
@@ -912,7 +938,27 @@ CQUIK_DEF cquik_status cquik_forward_kinematics(
     const double *q,
     double out_transform[16])
 {
-    return cquik__eval_kinematics(chain, q, NULL, NULL, out_transform);
+    return cquik__eval_kinematics(chain, q, NULL, NULL, NULL, out_transform);
+}
+
+CQUIK_DEF cquik_status cquik_forward_kinematics_all(
+    const cquik_chain *chain,
+    const double *q,
+    double *out_transforms_16xnp1)
+{
+    double tool_transform[16];
+
+    if (!out_transforms_16xnp1) {
+        return CQUIK_STATUS_INVALID_ARGUMENT;
+    }
+
+    return cquik__eval_kinematics(
+        chain,
+        q,
+        NULL,
+        NULL,
+        out_transforms_16xnp1,
+        tool_transform);
 }
 
 CQUIK_DEF cquik_status cquik_pose_error(

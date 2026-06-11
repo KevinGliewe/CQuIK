@@ -21,6 +21,7 @@ library when your platform requires it.
 The public API exposes:
 
 - `cquik_forward_kinematics` for standard-DH serial chains.
+- `cquik_forward_kinematics_all` for cumulative base-to-joint transforms.
 - `cquik_jacobian` for the 6-by-n geometric Jacobian.
 - `cquik_pose_error` for the 6D pose error used by the solver.
 - `cquik_solve` for `NR`, `DNR`, `QuIK`, and `DQuIK`.
@@ -181,6 +182,33 @@ if (status != CQUIK_STATUS_OK) {
 [ r20 r21 r22 pz ]
 [  0   0   0  1 ]
 ```
+
+### Joint Transforms
+
+Use `cquik_forward_kinematics_all` when you need individual joint frames for
+debugging, visualization, or drawing links.
+
+```c
+double q[6] = {0.20, -0.35, 0.45, 0.30, -0.25, 0.15};
+double joint_frames[(6 + 1) * 16];
+cquik_status status;
+
+status = cquik_forward_kinematics_all(&kuka_chain, q, joint_frames);
+if (status != CQUIK_STATUS_OK) {
+    return 1;
+}
+
+/* frame 0: base identity */
+const double *base = &joint_frames[0 * 16];
+
+/* frame i + 1: cumulative transform after joint i, before the optional tool */
+const double *joint_0 = &joint_frames[1 * 16];
+const double *joint_5 = &joint_frames[6 * 16];
+```
+
+The optional `chain.tool` transform is intentionally not included in
+`joint_frames`. Call `cquik_forward_kinematics` for the final tool pose, or
+multiply `joint_frames[chain.dof]` by `chain.tool` yourself when needed.
 
 ### Inverse Kinematics
 
