@@ -108,6 +108,41 @@ meson install -C build
 The Meson project exports `cquik_dep` internally for examples/tests and
 installs `cquik.h` as a header-only library.
 
+## SWIG Python Interface
+
+The SWIG interface for Python is in `bindings/python/cquik.i`. It wraps the C
+API directly and adds two small helpers:
+
+- `cquik_make_joint(...)` creates a `cquik_joint` value.
+- `cquik_make_chain(dof, joints, tool)` creates a `cquik_chain` value.
+
+Use SWIG's generated array wrappers for pointer arguments. Arrays passed into a
+chain must outlive that chain because CQuIK stores borrowed pointers.
+
+```python
+import math
+import cquik
+
+joints = cquik.cquik_joint_array(2)
+joints[0] = cquik.cquik_make_joint(
+    cquik.CQUIK_JOINT_REVOLUTE, 0.0, 0.0, 1.0, 0.0)
+joints[1] = cquik.cquik_make_joint(
+    cquik.CQUIK_JOINT_REVOLUTE, 0.0, 0.0, 1.0, 0.0)
+
+chain = cquik.cquik_make_chain(2, joints.cast(), None)
+
+q = cquik.cquik_double_array(2)
+q[0] = math.pi / 2.0
+q[1] = 0.0
+
+transform = cquik.cquik_double_array(16)
+status = cquik.cquik_forward_kinematics(chain, q, transform)
+if status != cquik.CQUIK_STATUS_OK:
+    raise RuntimeError(cquik.cquik_status_string(status))
+
+print(transform[3], transform[7], transform[11])
+```
+
 ## Examples
 
 ```sh
